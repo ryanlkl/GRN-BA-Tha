@@ -4,6 +4,8 @@ from resources import bool_to_int, LSearch, FitnessF
 import random
 from nAttractors import NAttractors
 from reducedMAB import ReducedMAB
+from multiprocessing import Pool
+import time
 
 class BeesAlgorithm_GRN:
     def __init__(self, file_name):
@@ -32,6 +34,7 @@ class BeesAlgorithm_GRN:
         self.number_of_attractors = 0
 
     def bees_alg_initialisation(self, file_BA_pars, file_GRN_pars):
+        print("Initialising Bees Algorithm")
         try:
             with open(file_BA_pars, "r") as infile_ba:
                 self.T = int(infile_ba.readline().strip().split()[0])
@@ -44,13 +47,23 @@ class BeesAlgorithm_GRN:
                 self.init_ngh = int(infile_ba.readline().strip().split()[0])
                 self.min_ngh = int(infile_ba.readline().strip().split()[0])
                 self.stlim = int(infile_ba.readline().strip().split()[0])
-                self.synch_mode = infile_ba.readlin().strip().split()[0].lower() == "true"
+                self.synch_mode = infile_ba.readline().strip().split()[0].lower() == "true"
                 self.search_threshold = float(infile_ba.readline().strip().split()[0])
-                self.save_threshold = float(infile_ba.readlin().strip().split()[0])
-                self.search_type = infile_ba.readlin().strip().split()[0]
-
-                if self.search_type not in ["delta", "reinit"]:
+                self.save_threshold = float(infile_ba.readline().strip().split()[0])
+                search_type = infile_ba.readline().strip().split()[0]
+                if search_type.lower() == "delta":
+                    self.search_type = LSearch.DELTA
+                elif search_type.lower() == "reinit":
+                    self.search_type = LSearch.REINIT
+                else:
                     raise ValueError("Invalid SearchType parameter in BA_parameters")
+                attr_type = infile_ba.readline().strip().split()[0]
+                if attr_type.lower() == "matrix":
+                    self.attr_type = FitnessF.ATTRACT_MATR
+                elif attr_type.lower() == "optimal":
+                    self.attr_type = FitnessF.ATTRACT_OPT
+                else:
+                    raise ValueError("Invalid AttrType parameter in BA_parameters")
         except FileNotFoundError:
             raise FileNotFoundError("Can't open BA parameter file")
 
@@ -93,25 +106,29 @@ class BeesAlgorithm_GRN:
         self.reset_solut_counter()
 
     def read_attractors(self, file_attractors):
+        print("Read Attractors")
         nodes = self.get_colony_member(0).get_number_of_nodes()
+        print(nodes)
         temp_point = [False] * nodes
 
         try:
             with open(file_attractors, "r") as infile:
                 self.number_of_attractors = int(infile.readline().strip())
-                fixed_points = [0] * self.number_of_attractors
+                nodes = self.get_colony_member(0).get_number_of_nodes()
+                fixed_points = []
 
-                for i in range(self.number_of_attractors):
-                    for j in range(nodes):
-                        temp = int(infile.readline().strip())
-                        temp_point[j] = temp
-                    fixed_points[i] = bool_to_int(nodes, temp_point)
+                for _ in range(self.number_of_attractors):
+                    temp_point = list(map(int, infile.readline().split()))
+                    fixed_points.append(bool_to_int(nodes, temp_point))
 
             return fixed_points
         except FileNotFoundError:
             raise FileNotFoundError("Can't open fixed points file")
+        except ValueError:
+            raise ValueError(f"Error: Invalid data format in '{file_attractors}'.")
         
     def set_obj_functions(self, target_file, attr_file):
+        print("Set Obj Function")
         type_of_function = self.get_attr_type()
         fixed_points = None
 
@@ -120,9 +137,13 @@ class BeesAlgorithm_GRN:
             member.get_number_of_nodes(),
             member.get_lower_extreme(),
             member.get_upper_extreme(),
-            target_file
+            target_file,
+            self.init_ngh
             )
         self.fitness_mab = ReducedMAB(member.get_number_of_nodes(), target_bee, FitnessF.TARGET)
+        print("Fitness MAB: ", self.fitness_mab)
+
+        print(type_of_function)
 
         if type_of_function == FitnessF.ATTRACT_MATR:
             fixed_points = self.read_attractors(attr_file)
@@ -136,12 +157,13 @@ class BeesAlgorithm_GRN:
             fixed_points = self.read_attractors(attr_file)
             self.fitness_fixed_points = NAttractors(
                 self.number_of_attractors,
-                member.get_number_of_nodes,
+                member.get_number_of_nodes(),
                 fixed_points,
                 type_of_function
                 )
         else:
             raise ValueError("Call to non existent fitness function type in set_obj_function()")
+        print(self.fitness_fixed_points)
         
     
     def pop_destructor(self):
@@ -237,73 +259,62 @@ class BeesAlgorithm_GRN:
         return self.best_fitness
     
     def bees_algorithm(self):
+        print("Performing Bees Algorithm")
         group_size = self.get_sites()
         cycles = self.get_T()
+        file_name = "runFiles/results/progress.txt"
 
         try:
-            with open("runFiles/results/progress.txt", "W") as progress_file:
+            with open(file_name, "a") as progress_file:
                 progress_file.write("iteration\tcurrent best\tbest-so-far\n")
 
-                for i in range(group_size):
-                    self.get_target_function().evaluate(self.get_colony_member(i), self.get_synch_mode)
+                for member in (self.get_colony_member(i) for i in range(group_size)):
+                    self.get_target_function().evaluate(member, self.get_synch_mode)
                 
                 self.set_best_fitness(self.get_colony_member(0).get_fitness())
                 self.bees_ranking()
-                self.monitor_progress(progress_file, 0)
+                self.monitor_progress(file_name, 0)
 
                 for i in range(1, cycles):
                     print(f"Iteration: {i}")
                     for j in range(6):
                         member = self.get_colony_member(j)
                         print(f"Current {j}: error = {member.get_fitness()} - edges = {member.get_edges()} - ttl = {member.get_ttl()}\n")
-
-                    print(f"Best found: error = {self.get_best_fitness()}\n\n")
+                    
                     self.waggle_dance()
                     self.local_search()
                     self.g_search()
                     self.site_abandonment()
                     self.bees_ranking()
-                    self.monitor_progress(progress_file, i)
+                    self.monitor_progress(file_name, i)
 
                 thr = self.get_save_threshold()
                 i = 0
-                while i < group_size:
-                    if self.get_colony_member(i).get_fitness() < thr:
-                        self.save_solution(self.get_colony_member(i))
-                    i += 1
+                for member in (self.get_colony_member(i) for i in range(group_size)):
+                    if member.get_fitness() < thr:
+                        self.save_solution(member)
+                
         except FileNotFoundError:
             raise FileNotFoundError("Can't open 'progress' file")
+        except Exception as e:
+            raise RuntimeError(f"Unexpected error during bees algorithm execution: {e}")
         
     def bees_ranking(self):
+        print("Bees Ranking")
         group_size = self.get_sites()
-        temp_array = [None] * group_size
+        temp_array = [self.get_colony_member(i) for i in range(group_size)]
 
-        for i in range(group_size):
-            temp_array[i] = self.get_colony_member[i]
+        temp_array.sort(key=lambda member: member.get_fitness())
 
-        cursor = 1
-        while cursor < group_size:
-            if temp_array[cursor].get_fitness() < temp_array[cursor - 1].get_fitness():
-                j = 0
-                while temp_array[j].get_fitness() < temp_array[cursor].get_fitness():
-                    j += 1
-                k = cursor
-                while j < k:
-                    temp_element = temp_array[k]
-                    temp_array[k] = temp_array[k - 1]
-                    temp_array[k - 1] = temp_element
-                    k -= 1
-                cursor += 1
-            else:
-                cursor += 1
-        
-        for i in range(group_size):
-            self.set_colony_member(i, temp_array[i])
-        
-        if temp_array[0].get_fitness() < self.get_best_fitness():
-            self.set_best_fitness(temp_array[0].get_fitness())
+        for i, member in enumerate(temp_array):
+            self.set_colony_member(i, member)
+
+        best_fitness = temp_array[0].get_fitness()
+        if best_fitness < self.get_best_fitness():
+            self.set_best_fitness(best_fitness)
 
     def waggle_dance(self):
+        print("Waggle Dance")
         elites = self.get_ne()
         bests = self.get_nb()
         elite_foragers = self.get_nre()
@@ -316,33 +327,58 @@ class BeesAlgorithm_GRN:
             self.get_colony_member(i).set_recruited(best_foragers)
 
     def local_search(self):
+        print("Local Search")
         bests = self.get_nb()
         s_type = self.get_search_type()
 
+        search_methods = {
+            LSearch.DELTA: self.delta_search,
+            LSearch.REINIT: self.reinit_search
+        }
+
+        if s_type not in search_methods:
+            raise ValueError("Wrong LSearch type")
+        
         for s in range(bests):
             scout = self.get_colony_member(s)
             scout_fitness = scout.get_fitness()
             scout_edges = scout.get_edges()
 
-            if s_type == LSearch.DELTA:
-                new_scout = self.delta_search(scout)
-            elif s_type == LSearch.REINIT:
-                new_scout = self.reinitSearch(scout)
-            else:
-                raise ValueError("Wrong Lsearch type")
-        
-            if new_scout.get_fitness < scout_fitness:
-                new_scout.set_ttl(self.get_stlim())
-                self.set_colony_member(s, new_scout)
-            elif new_scout.get_fitness() == scout_fitness and new_scout.get_edges() < scout_edges:
+            new_scout = search_methods[s_type](scout)
+            new_scout_fitness = new_scout.get_fitness()
+
+            if (new_scout_fitness < scout_fitness) or (
+                new_scout_fitness == scout_fitness and new_scout.get_edges() < scout_edges
+            ):
                 new_scout.set_ttl(self.get_stlim())
                 self.set_colony_member(s, new_scout)
             else:
-                if self.get_ngh_shr() and scout.get_ngh_size() > self.get_min_ngh:
+                if self.get_ngh_shr() and scout.get_ngh_size() > self.get_min_ngh():
                     scout.decrease_ngh_size()
                 scout.decrease_ttl()
+        
+        end_time = time.time()
+
+
+    def process_forager(self, i, new_scout, neighbourhood, nodes, minimum, maximum, o_funct, synch_mode):
+            new_forager = new_scout.create_copy()
+
+            for _ in range(neighbourhood):
+                random1, random2, random3 = random.choices(range(13), k=1)[0], random.randint(0, nodes - 1), random.randint(0,4)
+                new_value = 0 if random3 == 0 else random.randint(minimum, maximum)
+
+                if random1 == 0:
+                    new_forager.set_thr_vector_element(random2, new_value)
+                else:
+                    new_forager.set_adj_matrix_element(random2, random.randint(0, nodes - 1), new_value)
+            
+            o_funct.evaluate(new_forager, self.get_synch_mode())
+            new_forager_fitness = new_forager.get_fitness()
+
+            return new_forager, new_forager_fitness
 
     def reinit_search(self, scout: Bee):
+        print("Reinit Search")
         member = self.get_colony_member(0)
         nodes = member.get_number_of_nodes()
         minimum = member.get_lower_extreme()
@@ -358,35 +394,21 @@ class BeesAlgorithm_GRN:
         o_funct = self.get_target_function()
         foragers = new_scout.get_recruited()
         scout_fitness = new_scout.get_fitness()
+        
+        with Pool() as pool:
+            results = pool.starmap(self.process_forager,
+                                   [(i, new_scout, neighbourhood, nodes, minimum, maximum, o_funct, self.get_synch_mode()) for i in range(foragers)])
 
-        for f in range(foragers):
-            new_forager = new_scout.create_copy()
-            for n in range(neighbourhood):
-                random1 = random.randint(0,12)
-                random2 = random.randint(0, nodes - 1)
-                random3 = random.randint(0,4)
-                if random3 == 0:
-                    new_value = 0
-                else:
-                    new_value = random.randint(minimum, maximum)
-                
-                if random1 == 0:
-                    new_forager.set_thr_vector_element(random2, new_value)
-                else:
-                    random3 = random.randint(0, nodes - 1)
-                    new_forager.set_adj_matrix_element(random2, random3, new_value)
-            o_funct.evaluate(new_forager, self.get_synch_mode())
-
-            if new_forager.get_fitness() < scout_fitness:
-                new_scout = new_forager
-                scout_fitness = new_forager.get_fitness()
-            elif new_forager.get_fitness() == scout_fitness and new_forager.get_edges() < scout_edges:
-                new_scout = new_forager
-            else:
-                new_forager = None
+        for new_forager, new_forager_fitness in results:
+            if (new_forager.fitness < scout_fitness) or (
+                new_forager_fitness == scout_fitness and new_forager.get_edges() < scout_edges
+            ):
+                new_scout, scout_fitness = new_forager, new_forager_fitness
+            
         return new_scout
     
     def delta_search(self, scout: Bee):
+        print("Delta Search")
         synch = self.get_synch_mode()
         scout_edges = scout.get_edges()
         foragers = scout.get_recruited()
@@ -400,80 +422,57 @@ class BeesAlgorithm_GRN:
         new_scout = scout.create_copy()
 
         next_config = [False] * nodes
-        temp_config = [False] * nodes
 
-        if scout.get_fitness() > s_threshold:
-            o_funct = self.get_target_function()
-        else:
-            o_funct = self.get_attract_function()
+        o_funct = self.get_target_function() if scout.get_fitness() > s_threshold else self.get_attract_function()
 
         scout_fitness = scout.get_fitness()
-        for f in range(foragers):
+        next_state_func = scout.synch_next_state if synch else scout.asynch_next_state
+
+        for _ in range(foragers):
             random_state = random.randint(0, nr_of_states - 1)
             network_state = o_funct.get_state(random_state)
+            next_state_func(network_state, next_config)
 
-            if synch:
-                scout.synch_next_state(network_state, next_config)
-            else:
-                scout.asynch_next_state(network_state, next_config)
-            
             new_forager = scout.create_copy()
-            for n in range(neighbourhood):
-                for i in range(nodes - 1):
-                    temp_config[i] = next_config[i]
+
+            for _ in range(neighbourhood):
+                temp_config = next_config[:]
+
                 random1 = random.randint(0, nodes - 1)
                 count = 0
-                stop = False
 
-                while not stop and count < 5:
+                while count < 5:
                     random2 = random.randint(0, nodes)
-                    if next_config[random1]:
-                        change = -1
-                    else:
-                        change = 1
-                    
+                    change = -1 if next_config[random1] else 1
+
                     if random2 == 0:
                         current_value = new_forager.get_thr_vector_element(random1)
-                        if current_value == minimum:
-                            new_forager.set_thr_vector_element(random1, current_value + 1)
-                        elif current_value == maximum:
-                            new_forager.set_thr_vector_element(random1, current_value - 1)
-                        else:
-                            new_forager.set_thr_vector_element(random1, current_value + change)
+                        new_value = max(minimum, min(maximum, current_value + change))
+                        new_forager.set_thr_vector_element(random1, new_value)
                     else:
                         random3 = random.randint(0, nodes - 1)
                         current_value = new_forager.get_adj_matrix_element(random1, random3)
+                        new_value = max(minimum, min(maximum, current_value + change))
+                        new_forager.set_adj_matrix_element(random1, random3, new_value)
 
-                        if current_value == minimum:
-                            new_forager.set_adj_matrix_element(random1, random3, current_value + 1)
-                        elif current_value == maximum:
-                            new_forager.set_adj_matrix_element(random1, random3, current_value - 1)
-                        else:
-                            new_forager.set_adj_matrix_element(random1, random3, current_value + change)
-                    
-                    if synch:
-                        new_forager.synch_next_state(network_state, temp_config)
-                    else:
-                        new_forager.asynch_next_state(network_state, temp_config)
+                    next_state_func(network_state, temp_config)
 
-                    if temp_config[random1] == next_config[random1]:
-                        count += 1
-                    else:
-                        stop = True
-                        n = neighbourhood
+                    if temp_config[random1] != next_config[random1]:
+                        break
+                    count += 1
+
+            o_funct.evaluate(new_forager, synch)
+            new_forager_fitness = new_forager.get_fitness()
+
+            if (new_forager_fitness < scout_fitness) or (
+                new_forager_fitness == scout_fitness and new_forager.get_edges() < scout_edges
+            ):
+                new_scout, scout_fitness = new_forager, new_forager_fitness
             
-            o_funct.evaluate(new_forager, self.get_synch_mode())
-            if new_forager.get_fitness() < scout_fitness:
-                new_scout = new_forager
-                scout_fitness = new_forager.get_fitness()
-            elif new_forager.get_fitness() == scout_fitness and new_forager.get_edges() < scout_edges:
-                new_scout = new_forager
-            else:
-                new_forager = None
-        
         return new_scout
     
     def g_search(self):
+        print("Global Search")
         sts = self.get_sites()
         bst = self.get_nb()
 
@@ -485,10 +484,13 @@ class BeesAlgorithm_GRN:
             self.get_target_function().evaluate(self.get_colony_member(s), self.get_synch_mode())
 
     def site_abandonment(self):
+        print("Site Abandonment")
         bst = self.get_nb()
 
         for s in range(bst):
+            print(self.get_colony_member(s).get_ttl())
             if self.get_colony_member(s).get_ttl() == 0:
+                print(self.get_colony_member(s).get_fitness(), self.get_save_threshold())
                 if self.get_colony_member(s).get_fitness() < self.get_save_threshold():
                     self.save_solution(self.get_colony_member(s))
                     self.abandon(self.get_colony_member(s))
@@ -503,38 +505,30 @@ class BeesAlgorithm_GRN:
         self.get_target_function().evaluate(solution, self.get_synch_mode())
 
     def save_solution(self, solution: Bee):
-        file_name = f"{self.get_save_files()}{str(self.get_solut_counter())}.txt"
+        print("Saving solution: ")
+        file_name = f"{self.get_save_files()}{self.get_solut_counter()}.txt"
         try:
-            with open(file_name, "w") as file:
-                self.save_solution(solution, file)
+            with open(file_name, "a") as f:
+                nodes = solution.get_number_of_nodes()
+
+                for i in range(nodes):
+                    for j in range(nodes):
+                        f.write(f"{solution.get_adj_matrix_element(i,j)}\t")
+                    f.write("\n")
+                
+                for i in range(nodes):
+                    f.write(f"{solution.get_thr_vector_element(i)}\t")
+                f.write("\n")
             self.increment_solut_counter()
         except FileNotFoundError:
             raise FileNotFoundError(f"Can't open {file_name}")
         
     def monitor_progress(self, out_file, iteration):
         try:
-            with open(out_file, "W") as file:
-                file.write(f"{iteration}\t{self.get_colony_member(0).get_fitness()}\t{self.get_colony_member(0).get_edges()}\t{self.get_best_fitness}\n")
+            with open(out_file, "a") as f:
+                f.write(f"{iteration}\t{self.get_colony_member(0).get_fitness()}\t{self.get_colony_member(0).get_edges()}\t{self.get_best_fitness()}\n")
         except FileNotFoundError:
             raise FileNotFoundError("Out file not found")
-        
-    def save_solution(self, solution: Bee, out_file):
-        nodes = solution.get_number_of_nodes()
-
-        for i in range(nodes):
-            for j in range(nodes):
-                try:
-                    with open(out_file, "w") as file:
-                        file.write(f"{solution.get_adj_matrix_element(i,j)}\t")
-                except FileNotFoundError:
-                    raise FileNotFoundError("Out file not found")
-        
-        for i in range(nodes):
-            try:
-                with open(out_file, "w") as file:
-                    file.write(f"{solution.get_thr_vector_element(i)}\t")
-            except FileNotFoundError:
-                raise FileNotFoundError("Out file not found")
             
     def display_results(self):
         saved = self.get_solut_counter()
@@ -544,7 +538,13 @@ class BeesAlgorithm_GRN:
         for i in range(saved):
             file_name = f"{self.get_save_files()}{i}.txt"
             member = self.get_colony_member(0)
-            solution = Bee(member.get_number_of_nodes(), member.get_lower_extreme(), member.get_upper_extreme, file_name)
+            solution = Bee(
+                member.get_number_of_nodes(),
+                member.get_lower_extreme(),
+                member.get_upper_extreme(),
+                file_name,
+                self.init_ngh
+                )
             print(f"Solution {i}\n")
             o_funct.evaluate_display(solution, self.get_synch_mode())
 

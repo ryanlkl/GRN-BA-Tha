@@ -1,0 +1,15 @@
+1000 			// Number of iterations of the main cycle
+0 			// Number of scout bees (ns) - colony size cs = ne*nre + nb*nrb + ns
+6 			// Number of best sites (nb)
+3 			// Number of elite sites (ne)
+50 			// Recruited bees for best sites (nrb)
+100 			// Recruited bees for elite sites (nre)
+false 			// Flag indicating whether neighbourhood shrinking is used (nghShr=true / false)
+3 			// Initial size of neighbourhood (initNgh)
+3 			// Minimum size of neighbourhood (minNgh)
+50 			// Limit of stagnation cycles for site abandonment (stlim)
+true			// Synchronous updating scheme (true/false)
+100			// Fitness threshold for switching search from 'target' to 'attractors'
+-1000			// Fitness threshold for saving abandoned solution
+reinit			// type of local search (delta,reinit)
+optimal			// type of attractor fitness function (matrix,optimal)

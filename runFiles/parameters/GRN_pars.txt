@@ -1,0 +1,3 @@
+12	// number of GRN nodes
+-5	// minimum weight/threshold value
+5	// maximum weight/threshold value

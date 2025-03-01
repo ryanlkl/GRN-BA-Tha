@@ -1,34 +1,15 @@
 from resources import bool_to_int
 
 class FitnessFunction:
-    def __init__(self, number_of_nodes, type):
-        self.initialise_states(number_of_nodes)
-        self.funct_type = type
-        self.total_configs = 0
+    def __init__(self, number_of_nodes, types):
+        self.funct_type = types
+        self.total_configs = 1 << number_of_nodes
+        self.configurations = self._generate_configurations(number_of_nodes)
+        self.states_list = [-1] * self.total_configs
+        print("size: ", len(self.configurations), len(self.configurations[0]))
 
-    def initialise_states(self, number_of_nodes):
-        tot_s = 1 << number_of_nodes
-
-        self.total_configs = tot_s
-        configurations = [False] * tot_s
-
-        for i in range(tot_s):
-            configurations[i] = [False] * number_of_nodes
-
-            for j in range(number_of_nodes):
-                configurations[i][j] = False
-        
-        for i in range(1, tot_s):
-            j = number_of_nodes - 1
-            while configurations[i - 1][j]:
-                configurations[i][j] = not configurations[i - 1][j]
-                j -= 1
-            
-            configurations[i][j] = not configurations[i - 1][j]
-            j -= 1
-            while j >= 0:
-                configurations[i][j] = configurations[i - 1][j]
-                j -= 1
+    def _generate_configurations(self, number_of_nodes):
+        return [[(i >> j) & 1 == 1 for j in range(number_of_nodes - 1, -1, -1)] for i in range(self.total_configs)]
     
     def get_total_configs(self):
         return self.total_configs
@@ -45,30 +26,26 @@ class FitnessFunction:
         else:
             return self.configurations[GRN_configuration]
         
-    def find_attractors(self, solution, synch_update, states_list):
+    def find_attractors(self, solution, synch_update):
+        print("Find Attractors")
         nds = solution.get_number_of_nodes()
         stts = self.get_total_configs()
         current_config = [False] * nds
+        temp_sequence = [-1] * stts
         next_config = [False] * nds
-        temp_sequence = [0] * stts
-
-        for i in range(stts):
-            states_list[i] = -1
-            temp_sequence[i] = -1
 
         cursor_states = 0
         cursor_temp = 0
-
         while cursor_states < stts:
             cursor_temp = 0
-            while states_list[cursor_states] != -1 and cursor_states < stts - 1:
-                cursor_temps += 1
+            while self.states_list[cursor_states] != -1 and cursor_states < stts - 1:
+                cursor_states += 1
             
-            stop = False
-            fixed = False
+            stop, fixed = False, False
+
             for i in range(nds):
                 current_config[i] = self.get_node_state(cursor_states, i)
-            
+
             temp_sequence[cursor_temp] = bool_to_int(nds, current_config)
 
             while not stop:
@@ -76,17 +53,14 @@ class FitnessFunction:
                     solution.synch_next_state(current_config, next_config)
                 else:
                     solution.asynch_next_state(current_config, next_config)
-                
                 next_state = bool_to_int(nds, next_config)
 
-                if states_list[next_state] >= 0:
-                    stop = True
-                    fixed = True
-                    next_state = states_list[next_state]
+                if self.states_list[next_state] >= 0:
+                    stop, fixed = True, True
+                    next_state = self.states_list[next_state]
                 elif next_state == temp_sequence[cursor_temp]:
-                    stop = True
-                    fixed = True
-                elif states_list[next_state] == - 10:
+                    stop, fixed = True, True
+                elif self.states_list[next_state] == -10:
                     stop = True
                 
                 i = 0
@@ -94,27 +68,30 @@ class FitnessFunction:
                     if temp_sequence[i] == next_state:
                         stop = True
                     i += 1
-                
+
                 if stop and fixed:
                     i = 0
                     while i <= cursor_temp and i < stts:
-                        states_list[temp_sequence[i]] = next_state
+                        self.states_list[temp_sequence[i]] = next_state
+                        i += 1
                 elif stop:
                     i = 0
                     while i <= cursor_temp and i < stts:
-                        states_list[temp_sequence[i]] = -10
+                        self.states_list[temp_sequence[i]] = -10
+                        i += 1
                 else:
                     for i in range(nds):
                         current_config[i] = next_config[i]
-                    
                     cursor_temp += 1
                     if cursor_temp == stts:
                         stop = True
                     else:
                         temp_sequence[cursor_temp] = next_state
+            
             i = 0
             while i <= cursor_temp and i < stts:
                 temp_sequence[i] = -1
+                i += 1
             cursor_states += 1
     
     def get_funct_type(self):
